@@ -851,20 +851,6 @@ bool AttemptParticleSwap(State &state, CellList &cell_list, int index_1, int ind
 	state.particles[index_2].type = type_2_curr;
 	return false;
 
-
-	//////////////
-	/*if (CheckParticleOverlap(state, cell_list, state.particles[index_1]) && CheckParticleOverlap(state, cell_list, state.particles[index_2])){
-		return true;
-	}
-	else{
-		state.particles[index_1].type = type_1_curr;
-		state.particles[index_2].type = type_2_curr;
-		return false;
-	}*/
-	/////////////
-
-
-
 }
 
 //attempts to translate a particle with periodic wrapping
