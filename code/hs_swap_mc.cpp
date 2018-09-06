@@ -58,7 +58,7 @@ struct State {
 	double eta;
 	double mean_diameter;
 	vector< int > type_to_N_type; //maps particle type to the number of them
-	//vector< double > type_to_diameter_ratio; //maps particle type diameter ratio with respect to smallest
+	//vector< tuple< int > > swap_pair_options; //array of possible particle pairs to swap
 
 	//does any initialization needed after loading in relevant details
 	void Initialize(){
@@ -165,37 +165,36 @@ struct CellList{
 };
 
 //structure for the volume fractions to be sampled
-struct ExtendedStates{
-	double acceptance;
-	vector< double > etas;
-	vector< double > dr_max;
-	vector< long long int > num_trans;
-	vector< long long int > num_trans_accept;
-	vector< long long int > num_eta_change;
-	vector< long long int > num_eta_change_accept;
-	int active;
+struct ExtendedState{
+	double eta;
+	double dr_max;
+	double swap_threshold;
+	long long int num_trans;
+	long long int num_trans_accept;
+	long long int num_swaps;
+	long long int num_swaps_accept;
 };
 
 //function definitions
 void LoadSimulationData(
 	long long int &steps_equil, double &hours_equil,
 	long long int &steps_prod, double &hours_prod,
-	int &skip_steps, int &skip_steps_traj, long long int &skip_steps_check, double &dr_max, double &frac_trans, double &frac_swap, int &seed);
-void LoadExtendedStatesData(ExtendedStates &extended_states);
+	int &skip_steps, int &skip_steps_traj, long long int &skip_steps_check, double &dr_max, double &swap_threshold, double &frac_trans, int &seed);
+void LoadExtendedStateData(ExtendedState &extended_state);
 bool CheckParticleOverlapRSA(State &state, Particle &particle);
 bool NearestNeighborOverlap(State &state, Particle &particle1, Particle &particle2);
 bool CheckParticleOverlap(State &state, CellList &cell_list, Particle &particle);
 bool CheckAllParticleOverlaps(State &state, CellList &cell_list);
-void Compress(State &state, CellList &cell_list, double eta_tgt, double scale, double dr_max, int seed);
+void Compress(State &state, CellList &cell_list, double eta_tgt, double scale, double dr_max, double swap_threshold, int seed);
 void RandomSequentialAddition(State &state, int seed, int max_attempts = 100000);
 void WriteConfig(string file, State &state);
 void WriteState(string file, State &state);
 bool ReadState(string file, State &state);
-bool AttemptParticleSwap(State &state, CellList &cell_list, int index_1, int index_2);
+tuple<bool, bool> AttemptParticleSwap(State &state, CellList &cell_list, int index_1, int index_2, double swap_threshold);
 bool AttemptParticleTranslation(State &state, CellList &cell_list, int index, double dx, double dy, double dz);
-void WriteAcceptanceStats(ofstream &acceptance_stats_output, ExtendedStates &extended_states);
-void MonteCarlo(State &state, CellList &cell_list, ExtendedStates &extended_states, long long int steps, double hours, int skip_steps, int skip_steps_traj, long long int skip_steps_check,
-	string simulation_name, double dr_max, double frac_trans, double frac_swap, int seed);
+void WriteAcceptanceStats(ofstream &acceptance_stats_output, ExtendedState &extended_state);
+void MonteCarlo(State &state, CellList &cell_list, ExtendedState &extended_state, long long int steps, double hours, int skip_steps, int skip_steps_traj, long long int skip_steps_check,
+	string simulation_name, double dr_max, double swap_threshold, double frac_trans, int seed);
 
 //this will drive everything based on command line input values
 int main(){
@@ -204,16 +203,16 @@ int main(){
 	State state_new;
 	CellList cell_list;
 	CellList cell_list_new;
-	ExtendedStates extended_states;
+	ExtendedState extended_state;
 
 	//load in the relevant simulation details
 	long long int steps_equil, steps_prod, skip_steps_check;
 	double hours_equil, hours_prod;
 	int skip_steps, skip_steps_traj, seed;
-	double dr_max, frac_trans, frac_swap;
+	double dr_max, swap_threshold, frac_trans;
 	bool read_state;
 	LoadSimulationData(steps_equil, hours_equil, steps_prod,
-		hours_prod, skip_steps, skip_steps_traj, skip_steps_check, dr_max, frac_trans, frac_swap, seed);
+		hours_prod, skip_steps, skip_steps_traj, skip_steps_check, dr_max, swap_threshold, frac_trans, seed);
 
 	//read in an initial state or perform random sequential addition
 	read_state = ReadState("state_init.txt", state);
@@ -225,15 +224,14 @@ int main(){
 	cell_list.PrepareCellList(state, true);
 
 	//load in the extended states data
-	LoadExtendedStatesData(extended_states);
+	LoadExtendedStateData(extended_state);
 
 	//compress the thing if needed to achieve target and set active extended state
-	if (state.eta < extended_states.etas[0]){
-		Compress(state, cell_list, extended_states.etas[0], 0.999, extended_states.dr_max[0], seed);
+	if (state.eta < extended_state.eta){
+		Compress(state, cell_list, extended_state.eta, 0.999, extended_state.dr_max, extended_state.swap_threshold, seed);
 	}
 	state.Initialize();
 	cell_list.PrepareCellList(state, true);
-	extended_states.active = 0;
 
 	//display number of cells and mean particle diameter
 	cout << endl;
@@ -242,9 +240,11 @@ int main(){
 
 	//perform monte carlo iterations
 	WriteState("state_pre_equil.txt", state);
-	MonteCarlo(state, cell_list, extended_states, steps_equil, hours_equil, skip_steps, skip_steps_traj, skip_steps_check, "equilibration", dr_max, frac_trans, frac_swap, seed+1);
+	MonteCarlo(state, cell_list, extended_state, steps_equil, hours_equil, skip_steps, skip_steps_traj,
+		skip_steps_check, "equilibration", dr_max, swap_threshold, frac_trans, seed+1);
 	WriteState("state_pre_prod.txt", state);
-	MonteCarlo(state, cell_list, extended_states, steps_prod, hours_prod, skip_steps, skip_steps_traj, skip_steps_check, "production", dr_max, frac_trans, frac_swap, seed);
+	MonteCarlo(state, cell_list, extended_state, steps_prod, hours_prod, skip_steps, skip_steps_traj,
+		skip_steps_check, "production", dr_max, swap_threshold, frac_trans, seed);
 	WriteState("state_post_prod.txt", state);
 
 	//write one final config
@@ -257,7 +257,7 @@ int main(){
 void LoadSimulationData(
 	long long int &steps_equil, double &hours_equil,
 	long long int &steps_prod, double &hours_prod,
-	int &skip_steps, int &skip_steps_traj, long long int &skip_steps_check, double &dr_max, double &frac_trans, double &frac_swap, int &seed){
+	int &skip_steps, int &skip_steps_traj, long long int &skip_steps_check, double &dr_max, double &swap_threshold, double &frac_trans, int &seed){
 
 	ifstream in_file;
 	string line;
@@ -304,15 +304,15 @@ void LoadSimulationData(
 	regex_search(line, match, num_re);
 	dr_max = stod(match.str(1));
 
+	//read in swap_threshold
+	getline(in_file, line);
+	regex_search(line, match, num_re);
+	swap_threshold = stod(match.str(1));
+
 	//read in frac_trans
 	getline(in_file, line);
 	regex_search(line, match, num_re);
 	frac_trans = stod(match.str(1));
-
-	//read in frac_swap
-	getline(in_file, line);
-	regex_search(line, match, num_re);
-	frac_swap = stod(match.str(1));
 
 	//read in seed
 	getline(in_file, line);
@@ -331,60 +331,47 @@ void LoadSimulationData(
 	cout << "skip_steps_traj = " << skip_steps_traj << endl;
 	cout << "skip_steps_check = " << skip_steps_check << endl;
 	cout << "dr_max = " << dr_max << endl;
+	cout << "swap_threshold = " << swap_threshold << endl;
 	cout << "frac_trans = " << frac_trans << endl;
-	cout << "frac_swap = " << frac_swap << endl;
 	cout << "seed = " << seed << endl;
 	cout << endl;
 }
 
 //reads in intialization data for the run
-void LoadExtendedStatesData(ExtendedStates &extended_states){
+void LoadExtendedStateData(ExtendedState &extended_state){
 	ifstream in_file;
 	string line;
-	in_file.open("./extended_states.txt");
-	if (!in_file) { cerr << "Unable to open extended_states.txt"; exit(1); }
+	in_file.open("./extended_state.txt");
+	if (!in_file) { cerr << "Unable to open extended_state.txt"; exit(1); }
 
 	//prepare the regex's and match
 	regex num_re("([0-9\\.]+)");
 	sregex_iterator next, end;
 	smatch match;
 
-	//read in acceptance
+	//read in eta
 	getline(in_file, line);
 	regex_search(line, match, num_re);
-	extended_states.acceptance = stod(match.str(1));
+	extended_state.eta = stod(match.str(1));
+	extended_state.num_trans_accept = 0;
+	extended_state.num_trans = 0;
+	extended_state.num_swaps_accept = 0;
+	extended_state.num_swaps= 0;
 
-	//read in the etas
+	//read in dr_max
 	getline(in_file, line);
-	next = sregex_iterator(line.begin(), line.end(), num_re);
-	end = sregex_iterator();
-	extended_states.etas.clear();
-	while (next != end) {
-		match = *next;
-		extended_states.etas.push_back(stod(match.str(1)));
-		extended_states.num_trans_accept.push_back(0);
-		extended_states.num_trans.push_back(0);
-		extended_states.num_eta_change_accept.push_back(0);
-		extended_states.num_eta_change.push_back(0);
-		next++;
-	}
+	regex_search(line, match, num_re);
+	extended_state.dr_max = stod(match.str(1));
 
-	//read in the dr_max values
+	//read in swap_threshold
 	getline(in_file, line);
-	getline(in_file, line);
-	next = sregex_iterator(line.begin(), line.end(), num_re);
-	end = sregex_iterator();
-	extended_states.dr_max.clear();
-	while (next != end) {
-		match = *next;
-		extended_states.dr_max.push_back(stod(match.str(1)));
-		next++;
-	}
+	regex_search(line, match, num_re);
+	extended_state.swap_threshold = stod(match.str(1));
 
-	cout << "Loaded extended states data" << endl;
-	cout << "Acceptance = " << extended_states.acceptance << endl;
-	cout << "Min eta = " << extended_states.etas.front() << endl;
-	cout << "Max eta = " << extended_states.etas.back() << endl << endl;
+	cout << "Loaded extended state data" << endl;
+	cout << "eta = " << extended_state.eta << endl;
+	cout << "dr_max = " << extended_state.dr_max << endl;
+	cout << "swap_threshold = " << extended_state.swap_threshold << endl << endl;
 
 	in_file.close();
 }
@@ -545,7 +532,7 @@ bool CheckAllParticleOverlaps(State &state, CellList &cell_list){
 }
 
 //compresses the system to a target volume fraction
-void Compress(State &state, CellList &cell_list, double eta_tgt, double scale, double dr_max, int seed){
+void Compress(State &state, CellList &cell_list, double eta_tgt, double scale, double dr_max, double swap_threshold, int seed){
 	mt19937_64 rng_index, rng_x, rng_y, rng_z;
 	mt19937_64 rng_index1, rng_index2;
 	rng_index.seed(99991+seed); rng_x.seed(3465+seed); rng_y.seed(1503+seed); rng_z.seed(3387773+seed);
@@ -590,7 +577,7 @@ void Compress(State &state, CellList &cell_list, double eta_tgt, double scale, d
 			//perform a bunch of MC moves to hopefully free up overlaps
 			for (int i = 0; i < 100 * state.N; i++){
 				AttemptParticleTranslation(state, cell_list, r_index(rng_index), r_dr(rng_x), r_dr(rng_y), r_dr(rng_z));
-				AttemptParticleSwap(state, cell_list, r_index(rng_index1), r_index(rng_index2));
+				AttemptParticleSwap(state, cell_list, r_index(rng_index1), r_index(rng_index2), swap_threshold);
 			}
 		}
 
@@ -818,21 +805,21 @@ bool ReadState(string file, State &state){
 }
 
 //attempt a particle swap
-bool AttemptParticleSwap(State &state, CellList &cell_list, int index_1, int index_2){
+tuple<bool, bool> AttemptParticleSwap(State &state, CellList &cell_list, int index_1, int index_2, double swap_threshold){
 	//save the types
 	int type_1_curr = state.particles[index_1].type;
 	int type_2_curr = state.particles[index_2].type;
 
 	//if the same type just do it
 	if (type_1_curr == type_2_curr)
-		return true;
+		return make_tuple(true, false); //return true;
 
 	//only swap similar particles that deviate
 	double d1 = state.type_to_diameter[type_1_curr];
 	double d2 = state.type_to_diameter[type_2_curr];
 	double diff = abs(d1 - d2);
-	if (diff > 0.25*state.mean_diameter)
-		return false;
+	if (diff > swap_threshold*state.mean_diameter)
+		return make_tuple(false, false); //return false;
 
 	//change the types if different
 	state.particles[index_1].type = type_2_curr;
@@ -841,15 +828,15 @@ bool AttemptParticleSwap(State &state, CellList &cell_list, int index_1, int ind
 	//check for overlaps (only for the larger particle that is)
 	if (d1 > d2){
 		if (CheckParticleOverlap(state, cell_list, state.particles[index_2]))
-			return true;
+			return make_tuple(true, true); //return true;
 	}
 	else{
 		if (CheckParticleOverlap(state, cell_list, state.particles[index_1]))
-			return true;
+			return make_tuple(true, true); //return true;
 	}
 	state.particles[index_1].type = type_1_curr;
 	state.particles[index_2].type = type_2_curr;
-	return false;
+	return make_tuple(false, true); //return false;
 
 }
 
@@ -873,16 +860,14 @@ bool AttemptParticleTranslation(State &state, CellList &cell_list, int index, do
 }
 
 //writes out the acceptance stats for each eta
-void WriteAcceptanceStats(ofstream &acceptance_stats_output, ExtendedStates &extended_states){
-	for (int i = 0; i < (int)extended_states.num_trans.size(); i++){
-		acceptance_stats_output << extended_states.etas[i] << "," << (double)extended_states.num_trans_accept[i] / (double)extended_states.num_trans[i] << "," << (double)extended_states.num_trans[i];
-		acceptance_stats_output << "," << (double)extended_states.num_eta_change_accept[i] / (double)extended_states.num_eta_change[i] << "," << (double)extended_states.num_eta_change[i] << endl;
-	}
+void WriteAcceptanceStats(ofstream &acceptance_stats_output, ExtendedState &extended_state){
+	acceptance_stats_output << "Trans: " << (double)extended_state.num_trans_accept / (double)extended_state.num_trans
+	<< "    |    Swap: " << (double)extended_state.num_swaps_accept / (double)extended_state.num_swaps << endl;
 }
 
 //perform monte carlo steps
-void MonteCarlo(State &state, CellList &cell_list, ExtendedStates &extended_states, long long int steps, double hours, int skip_steps, int skip_steps_traj, long long int skip_steps_check,
-				string simulation_name, double dr_max, double frac_trans, double frac_swap, int seed)
+void MonteCarlo(State &state, CellList &cell_list, ExtendedState &extended_state, long long int steps, double hours, int skip_steps, int skip_steps_traj, long long int skip_steps_check,
+				string simulation_name, double dr_max, double swap_threshold, double frac_trans, int seed)
 {
 	//random number generator
 	mt19937_64 rng_move_type, rng_index, rng_swap_index_1, rng_swap_index_2, rng_x, rng_y, rng_z, rng_eta_change, rng_eta_change_accept;
@@ -893,22 +878,23 @@ void MonteCarlo(State &state, CellList &cell_list, ExtendedStates &extended_stat
 	uniform_real_distribution<double> r_dr(-1.0, 1.0);
 	uniform_int_distribution<int> r_eta_change(0, 1); //0=shrink, 1=grow
 	uniform_real_distribution<double> r_accept(0, 1);
-	bool translation_status, swap_status, eta_change_status;
+	bool translation_status, swap_status, count_swap_attempt;
 	double move_type;
 	string filename, check_filename;
 	int min_left;
 	int skip_for_stats = 1000000;
 	int random_eta_change, active_current;
 	double r_dr_x, r_dr_y, r_dr_z;
+	int index_1, index_2;
 
 	//open the file fro writing eta statistics
 	cout << "Performing " << simulation_name << "..." << endl;
 
 	//zero out the acceptance statistics
-	std::fill(extended_states.num_trans.begin(), extended_states.num_trans.end(), 1);
-	std::fill(extended_states.num_trans_accept.begin(), extended_states.num_trans_accept.end(), 0);
-	std::fill(extended_states.num_eta_change.begin(), extended_states.num_eta_change.end(), 1);
-	std::fill(extended_states.num_eta_change_accept.begin(), extended_states.num_eta_change_accept.end(), 0);
+	extended_state.num_trans = 1;
+	extended_state.num_trans_accept = 0;
+	extended_state.num_swaps = 1;
+	extended_state.num_swaps_accept = 0;
 
 	//if using time based kill fetch end time
 	int minutes = max(0, (int)(hours * 60.0));
@@ -922,16 +908,22 @@ void MonteCarlo(State &state, CellList &cell_list, ExtendedStates &extended_stat
 
 		//random translation move
 		if (move_type <= frac_trans){
-			r_dr_x = extended_states.dr_max[extended_states.active] * r_dr(rng_x);
-			r_dr_y = extended_states.dr_max[extended_states.active] * r_dr(rng_y);
-			r_dr_z = extended_states.dr_max[extended_states.active] * r_dr(rng_z);
+			r_dr_x = extended_state.dr_max * r_dr(rng_x);
+			r_dr_y = extended_state.dr_max * r_dr(rng_y);
+			r_dr_z = extended_state.dr_max * r_dr(rng_z);
 			translation_status = AttemptParticleTranslation(state, cell_list, r_index(rng_index), r_dr_x, r_dr_y, r_dr_z);
-			extended_states.num_trans[extended_states.active] = extended_states.num_trans[extended_states.active] + 1;
-			extended_states.num_trans_accept[extended_states.active] = extended_states.num_trans_accept[extended_states.active] + (int)translation_status;
+			extended_state.num_trans = extended_state.num_trans + 1;
+			extended_state.num_trans_accept = extended_state.num_trans_accept + (int)translation_status;
 		}
 		//random particle swap
 		else{
-			swap_status = AttemptParticleSwap(state, cell_list, r_index(rng_swap_index_1), r_index(rng_swap_index_2));
+			index_1 = r_index(rng_swap_index_1);
+			index_2 = r_index(rng_swap_index_2);
+			tie(swap_status, count_swap_attempt) = AttemptParticleSwap(state, cell_list, index_1, index_2, swap_threshold);
+			if(count_swap_attempt){
+				extended_state.num_swaps = extended_state.num_swaps + 1;
+				extended_state.num_swaps_accept = extended_state.num_swaps_accept + (int)swap_status;
+			}
 		}
 
 		//message user
@@ -961,7 +953,7 @@ void MonteCarlo(State &state, CellList &cell_list, ExtendedStates &extended_stat
 			filename = simulation_name + "__type_stats.dat";
 			min_left = std::chrono::duration_cast<std::chrono::minutes>(end_time - chrono::system_clock::now()).count();
 			ofstream acceptance_stats_output(simulation_name + "__acceptance_stats.dat", ios::trunc);
-			WriteAcceptanceStats(acceptance_stats_output, extended_states);
+			WriteAcceptanceStats(acceptance_stats_output, extended_state);
 			acceptance_stats_output.close();
 
 		}
