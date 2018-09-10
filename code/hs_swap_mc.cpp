@@ -246,13 +246,13 @@ int main(){
 		cout << endl;
 		cout << "Tuning before compression..." << endl;
 		//tune the translation assuming everything swaps
-		dr_max = TranslationTuner(acc_target_translation, 1000000, num_trials,
+		dr_max = TranslationTuner(0.92, 1000000, num_trials,
 															 state, cell_list, extended_state, swap_threshold=100.0, frac_trans=1.0);
 		cout << endl;
 	  //tune the swap with just a few translation moves
-		swap_threshold = SwapTuner(acc_target_swap, 3000000, num_trials,
+		swap_threshold = SwapTuner(0.92, 3000000, num_trials,
 															 state, cell_list, extended_state, dr_max=dr_max, frac_trans=0.40);
-		Compress(state, cell_list, eta, 0.999, dr_max, swap_threshold, seed);
+		Compress(state, cell_list, eta, 0.9992, dr_max, swap_threshold, seed);
 	}
 	state.Initialize();
 	cell_list.PrepareCellList(state, true);
@@ -278,6 +278,9 @@ int main(){
   //tune the swap with just a few translation moves
 	swap_threshold = SwapTuner(acc_target_swap, 3000000, num_trials,
 														 state, cell_list, extended_state, dr_max=dr_max, frac_trans=0.40);
+	cout << endl;
+	dr_max = TranslationTuner(acc_target_translation, 1000000, num_trials,
+														 state, cell_list, extended_state, swap_threshold=swap_threshold, frac_trans=0.8);
 	cout << endl;
 	/////////////////////////////////////////////////////////////
 	/////////////////////////////////////////////////////////////
@@ -645,7 +648,7 @@ void Compress(State &state, CellList &cell_list, double eta_tgt, double scale, d
 			cout << "Finished compression to a volume fraction of " << state.eta << endl << endl;
 			target_reached = true;
 		}
-		WriteConfig("trajectory_compress.xyz", state);
+		//WriteConfig("trajectory_compress.xyz", state);
 	}
 }
 
